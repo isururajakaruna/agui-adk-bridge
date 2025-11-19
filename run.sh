@@ -88,6 +88,6 @@ source venv/bin/activate
 # Load environment variables
 export $(grep -v '^#' .env | xargs)
 
-# Start the bridge
-python src/main.py
+# Start the bridge (use -m to run as module, fixing relative imports)
+python -m src.main
 

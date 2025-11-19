@@ -77,8 +77,8 @@ pip install -e .
 # Load environment variables
 export $(grep -v '^#' .env | xargs)
 
-# Start the bridge
-python src/main.py
+# Start the bridge (use -m to run as module)
+python -m src.main
 ```
 
 ---
@@ -155,6 +155,16 @@ lsof -ti:8000 | xargs kill -9
 # Clean reinstall
 rm -rf venv
 ./setup.sh
+```
+
+### Import error: "attempted relative import with no known parent package"
+```bash
+# This happens if you run: python src/main.py
+# Fix: Use the run.sh script which runs it as a module
+./run.sh
+
+# Or run manually as a module:
+python -m src.main
 ```
 
 ### Agent Engine connection failed
