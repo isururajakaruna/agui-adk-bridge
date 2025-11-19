@@ -1,0 +1,14 @@
+# Alternative to pyproject.toml for pip installations
+# Use this if you're not using uv
+
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+google-cloud-aiplatform>=1.60.0
+
+# Install the local ADK middleware
+# Run from project root: pip install -e ./integrations/adk-middleware/python
+ag_ui_adk>=0.1.0
+
