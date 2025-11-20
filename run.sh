@@ -1,12 +1,12 @@
 #!/bin/bash
 
-# ADK Bridge Run Script
-# This script starts the AG-UI Dojo to Agent Engine Bridge
+# ADK Bridge Run Script - Direct Protocol Implementation
+# This script starts the AG-UI Dojo to Agent Engine Bridge (Direct Mode)
 
 set -e  # Exit on error
 
-echo "🚀 AG-UI Dojo ADK Bridge - Starting Application"
-echo "==============================================="
+echo "🚀 AG-UI Dojo ADK Bridge - Starting Application (Direct Protocol)"
+echo "================================================================="
 echo ""
 
 # Check if we're in the right directory
@@ -76,8 +76,9 @@ fi
 echo ""
 echo "🌐 Starting bridge on http://localhost:8000"
 echo "📡 Connecting to Google Agent Engine"
+echo "🔧 Mode: Direct Protocol Translation (No Middleware)"
 echo ""
-echo "📝 Logs will be saved to: logs/events_*.log"
+echo "📝 Logs will be saved to: logs/events_*.log and logs/agent_engine_raw_*.log"
 echo ""
 echo "Press Ctrl+C to stop the server"
 echo ""
@@ -88,6 +89,6 @@ source venv/bin/activate
 # Load environment variables
 export $(grep -v '^#' .env | xargs)
 
-# Start the bridge (use -m to run as module, fixing relative imports)
-python -m src.main
+# Start the bridge with direct protocol implementation
+python -m src.main_direct
 
