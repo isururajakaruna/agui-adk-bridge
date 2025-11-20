@@ -8,8 +8,29 @@ import httpx
 from google.adk.agents import BaseAgent
 from google.adk.events import Event
 from google.genai import types as genai_types
+from pathlib import Path
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# Create separate logger for raw Agent Engine responses
+agent_engine_logger = logging.getLogger("agent_engine_raw")
+agent_engine_logger.setLevel(logging.DEBUG)
+
+# Create agent_engine_raw logs directory and file
+logs_dir = Path(__file__).parent.parent / "logs"
+logs_dir.mkdir(exist_ok=True)
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+agent_engine_log_file = logs_dir / f"agent_engine_raw_{timestamp}.log"
+
+# File handler for Agent Engine raw responses only
+agent_engine_handler = logging.FileHandler(agent_engine_log_file, encoding='utf-8')
+agent_engine_handler.setLevel(logging.DEBUG)
+agent_engine_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+agent_engine_logger.addHandler(agent_engine_handler)
+agent_engine_logger.propagate = False  # Don't propagate to root logger
+
+logger.info(f"📝 Agent Engine raw responses will be saved to: {agent_engine_log_file}")
 
 
 class ReasoningEngineAgent(BaseAgent):
@@ -157,6 +178,13 @@ class ReasoningEngineAgent(BaseAgent):
         logger.info(f"Calling Reasoning Engine with message: {user_message[:100]}...")
         logger.info(f"Payload: {payload}")
         
+        # Log request to Agent Engine raw log
+        agent_engine_logger.info("=" * 80)
+        agent_engine_logger.info("REQUEST TO AGENT ENGINE:")
+        agent_engine_logger.info(f"User Message: {user_message}")
+        agent_engine_logger.info(f"Payload: {json.dumps(payload, indent=2)}")
+        agent_engine_logger.info("=" * 80)
+        
         try:
             # Use streaming endpoint
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -171,6 +199,7 @@ class ReasoningEngineAgent(BaseAgent):
                         error_text = await response.aread()
                         error_msg = f"HTTP {response.status_code}: {error_text.decode('utf-8')}"
                         logger.error(error_msg)
+                        agent_engine_logger.error(f"ERROR: {error_msg}")
                         
                         # Yield error event
                         from google.adk.events import Event
@@ -195,9 +224,11 @@ class ReasoningEngineAgent(BaseAgent):
                             # Parse JSON response (GCP returns JSON directly, not SSE format)
                             data = json.loads(line)
                             
-                            # Log the FULL raw event first
-                            logger.info(f"📦 RAW GCP EVENT:")
-                            logger.info(json.dumps(data, indent=2))
+                            # Log the FULL raw event to separate file
+                            agent_engine_logger.info("=" * 80)
+                            agent_engine_logger.info("RAW AGENT ENGINE RESPONSE:")
+                            agent_engine_logger.info(json.dumps(data, indent=2))
+                            agent_engine_logger.info("=" * 80)
                             
                             # Log event details for debugging
                             if isinstance(data, dict):
@@ -278,13 +309,16 @@ class ReasoningEngineAgent(BaseAgent):
                             continue
                         except Exception as e:
                             logger.error(f"Error processing event: {e}", exc_info=True)
+                            agent_engine_logger.error(f"ERROR processing event: {e}")
                             continue
                     
                     logger.info(f"✅ Stream completed from Reasoning Engine")
+                    agent_engine_logger.info("✅ STREAM COMPLETED FROM AGENT ENGINE")
                 
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP {e.response.status_code} error: {e.response.text}"
             logger.error(error_msg)
+            agent_engine_logger.error(f"HTTP ERROR: {error_msg}")
             # Yield an error response
             from google.adk.events import Event
             yield Event(
@@ -296,6 +330,7 @@ class ReasoningEngineAgent(BaseAgent):
             )
         except Exception as e:
             logger.error(f"Error calling Reasoning Engine: {e}", exc_info=True)
+            agent_engine_logger.error(f"EXCEPTION: {e}")
             from google.adk.events import Event
             yield Event(
                 author="model",

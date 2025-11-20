@@ -122,6 +122,12 @@ try:
         credentials_path=settings.google_application_credentials,
     )
     
+    # Verify agent was created
+    if agent_engine_agent is None:
+        raise ValueError("Agent Engine client returned None - check configuration")
+    
+    logger.info(f"✅ Agent Engine client created: {type(agent_engine_agent)}")
+    
     # Wrap with ADK middleware
     bridge_agent = ADKAgent(
         adk_agent=agent_engine_agent,
@@ -131,6 +137,12 @@ try:
         max_concurrent_executions=settings.max_concurrent_executions,
         use_in_memory_services=True,  # Use in-memory for simplicity
     )
+    
+    # Verify bridge agent was created
+    if bridge_agent is None:
+        raise ValueError("ADKAgent middleware returned None")
+    
+    logger.info(f"✅ ADK middleware created: {type(bridge_agent)}")
     
     # Add the endpoint
     add_adk_fastapi_endpoint(app, bridge_agent, path="/chat")
