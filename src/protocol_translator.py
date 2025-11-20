@@ -24,6 +24,10 @@ class AGUIProtocolTranslator:
         self.total_tool_calls = 0
         self.session_start_time: Optional[float] = None
         
+        # Track text message streaming state
+        self.message_started = False
+        self.current_text_message_id: Optional[str] = None
+        
     async def translate_stream(
         self,
         agent_engine_events: AsyncIterator[Dict[str, Any]],
@@ -89,6 +93,16 @@ class AGUIProtocolTranslator:
                 self.metadata_store.set_session_stats(self.thread_id, session_stats_content)
             
             logger.info(f"📊 Session stats - Thinking tokens: {self.total_thinking_tokens}, Tool calls: {self.total_tool_calls}, Duration: {duration_seconds:.2f}s")
+            
+            # Close any open text message before finishing the stream
+            if self.message_started and self.current_text_message_id:
+                yield self._format_sse({
+                    "type": "TEXT_MESSAGE_END",
+                    "messageId": self.current_text_message_id
+                })
+                logger.debug(f"📤 TEXT_MESSAGE_END (stream complete)")
+                self.message_started = False
+                self.current_text_message_id = None
                     
             # Emit RUN_FINISHED
             yield self._format_sse({
@@ -146,9 +160,15 @@ class AGUIProtocolTranslator:
         if not text:
             return
         
-        # Generate message ID
-        message_id = str(uuid.uuid4())
-        self.current_message_id = message_id
+        # Close any open text message before handling thinking (tool call)
+        if has_thinking and self.message_started:
+            yield self._format_sse({
+                "type": "TEXT_MESSAGE_END",
+                "messageId": self.current_text_message_id
+            })
+            logger.debug(f"📤 TEXT_MESSAGE_END (before thinking)")
+            self.message_started = False
+            self.current_text_message_id = None
         
         # If thinking is present, send as TOOL_CALL (so frontend can render without causing loop)
         if has_thinking:
@@ -208,25 +228,28 @@ class AGUIProtocolTranslator:
             if self.metadata_store and self.thread_id:
                 self.metadata_store.add_thinking(self.thread_id, thinking_args)
         
-        # Emit TEXT_MESSAGE_START
-        yield self._format_sse({
-            "type": "TEXT_MESSAGE_START",
-            "messageId": message_id,
-            "role": "assistant"
-        })
+        # Start a new text message if not already started
+        if not self.message_started:
+            self.current_text_message_id = str(uuid.uuid4())
+            self.message_started = True
+            
+            # Emit TEXT_MESSAGE_START (only once per message)
+            yield self._format_sse({
+                "type": "TEXT_MESSAGE_START",
+                "messageId": self.current_text_message_id,
+                "role": "assistant"
+            })
+            logger.debug(f"📤 TEXT_MESSAGE_START (messageId: {self.current_text_message_id})")
         
-        # Emit TEXT_MESSAGE_CONTENT
+        # Emit TEXT_MESSAGE_CONTENT for this chunk (streaming delta)
         yield self._format_sse({
             "type": "TEXT_MESSAGE_CONTENT",
-            "messageId": message_id,
+            "messageId": self.current_text_message_id,
             "delta": text
         })
+        logger.debug(f"📤 TEXT_MESSAGE_CONTENT chunk ({len(text)} chars)")
         
-        # Emit TEXT_MESSAGE_END
-        yield self._format_sse({
-            "type": "TEXT_MESSAGE_END",
-            "messageId": message_id
-        })
+        # Don't send TEXT_MESSAGE_END here - keep message open for streaming!
         
         # Send thinking completion as a separate tool call (optional - can be removed if not needed)
         # The initial thinking tool call already has a TOOL_CALL_RESULT marking it complete
@@ -234,6 +257,16 @@ class AGUIProtocolTranslator:
     
     async def _handle_function_call(self, part: Dict[str, Any]) -> AsyncIterator[str]:
         """Handle function call (tool call) parts."""
+        
+        # Close any open text message before starting a tool call
+        if self.message_started:
+            yield self._format_sse({
+                "type": "TEXT_MESSAGE_END",
+                "messageId": self.current_text_message_id
+            })
+            logger.debug(f"📤 TEXT_MESSAGE_END (before tool call)")
+            self.message_started = False
+            self.current_text_message_id = None
         
         function_call = part.get("function_call", {})
         tool_call_id = function_call.get("id", str(uuid.uuid4()))
