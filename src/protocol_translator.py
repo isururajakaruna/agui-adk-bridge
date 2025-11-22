@@ -130,7 +130,7 @@ class AGUIProtocolTranslator:
             logger.debug("No parts in event, skipping")
             return
         
-        # Process each part
+        # Process each part - pass full event for metadata extraction
         for part in parts:
             # Handle text messages
             if "text" in part:
@@ -139,12 +139,12 @@ class AGUIProtocolTranslator:
             
             # Handle function calls (tool calls)
             elif "function_call" in part:
-                async for agui_event in self._handle_function_call(part):
+                async for agui_event in self._handle_function_call(part, event):
                     yield agui_event
             
             # Handle function responses (tool results)
             elif "function_response" in part:
-                async for agui_event in self._handle_function_response(part):
+                async for agui_event in self._handle_function_response(part, event):
                     yield agui_event
     
     async def _handle_text_message(
@@ -178,7 +178,13 @@ class AGUIProtocolTranslator:
             # Track total thinking tokens
             self.total_thinking_tokens += thoughts_token_count
             
-            logger.info(f"🧠 Thinking detected (thoughts_token_count: {thoughts_token_count})")
+            # Extract thought_signature (binary data) for eval logging
+            thought_signature = part.get('thought_signature', None)
+            author = event.get("author", "unknown")
+            
+            logger.info(f"🧠 Thinking detected (thoughts_token_count: {thoughts_token_count}) [Author: {author}]")
+            if thought_signature:
+                logger.debug(f"   Thought signature present: {len(thought_signature) if thought_signature else 0} bytes")
             
             # Create unique tool call ID for this thinking event
             thinking_tool_id = f"thinking-{self.thread_id}-{int(time.time() * 1000)}"
@@ -190,7 +196,13 @@ class AGUIProtocolTranslator:
                 "totalTokenCount": usage.get('total_token_count', 0),
                 "candidatesTokenCount": usage.get('candidates_token_count', 0),
                 "promptTokenCount": usage.get('prompt_token_count', 0),
-                "model": event.get('model_version', 'unknown')
+                "model": event.get('model_version', 'unknown'),
+                # Add eval metadata for logging
+                "_eval_metadata": {
+                    "thought_signature": thought_signature,
+                    "author": author,
+                    "usage_metadata": usage
+                }
             }
             
             # Emit TOOL_CALL_START
@@ -255,7 +267,7 @@ class AGUIProtocolTranslator:
         # The initial thinking tool call already has a TOOL_CALL_RESULT marking it complete
         # This is just for tracking in metadata if needed
     
-    async def _handle_function_call(self, part: Dict[str, Any]) -> AsyncIterator[str]:
+    async def _handle_function_call(self, part: Dict[str, Any], event: Dict[str, Any]) -> AsyncIterator[str]:
         """Handle function call (tool call) parts."""
         
         # Close any open text message before starting a tool call
@@ -273,16 +285,25 @@ class AGUIProtocolTranslator:
         tool_name = function_call.get("name", "unknown")
         tool_args = function_call.get("args", {})
         
+        # Extract metadata for eval logging
+        author = event.get("author", "unknown")
+        
         # Track tool call count
         self.total_tool_calls += 1
         
-        logger.info(f"🔧 Tool Call: {tool_name} (ID: {tool_call_id})")
+        logger.info(f"🔧 Tool Call: {tool_name} (ID: {tool_call_id}) [Author: {author}] [With Eval Metadata]")
         
-        # Emit TOOL_CALL_START
+        # Emit TOOL_CALL_START with eval metadata
         yield self._format_sse({
             "type": "TOOL_CALL_START",
             "toolCallId": tool_call_id,
-            "toolCallName": tool_name
+            "toolCallName": tool_name,
+            # Extra metadata for eval logging (ignored by CopilotKit, captured by EventLogger)
+            "_eval_metadata": {
+                "author": author,
+                "raw_function_call": function_call,
+                "role": "model"
+            }
         })
         
         # Emit TOOL_CALL_ARGS (stream the full args as JSON)
@@ -299,7 +320,7 @@ class AGUIProtocolTranslator:
             "toolCallId": tool_call_id
         })
     
-    async def _handle_function_response(self, part: Dict[str, Any]) -> AsyncIterator[str]:
+    async def _handle_function_response(self, part: Dict[str, Any], event: Dict[str, Any]) -> AsyncIterator[str]:
         """Handle function response (tool result) parts."""
         
         function_response = part.get("function_response", {})
@@ -307,18 +328,27 @@ class AGUIProtocolTranslator:
         tool_name = function_response.get("name", "unknown")
         response = function_response.get("response", {})
         
-        logger.info(f"✅ Tool Result: {tool_name} (ID: {tool_call_id})")
+        # Extract metadata for eval logging
+        author = event.get("author", "unknown")
+        
+        logger.info(f"✅ Tool Result: {tool_name} (ID: {tool_call_id}) [Author: {author}]")
         
         # Generate message ID for the tool result
         message_id = str(uuid.uuid4())
         
-        # Emit TOOL_CALL_RESULT
+        # Emit TOOL_CALL_RESULT with eval metadata
         yield self._format_sse({
             "type": "TOOL_CALL_RESULT",
             "messageId": message_id,
             "toolCallId": tool_call_id,
             "content": json.dumps(response),
-            "role": "tool"
+            "role": "tool",
+            # Extra metadata for eval logging
+            "_eval_metadata": {
+                "author": author,
+                "raw_function_response": function_response,
+                "role": "user"
+            }
         })
     
     def _format_sse(self, event: Dict[str, Any]) -> str:
